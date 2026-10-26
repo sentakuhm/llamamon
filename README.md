@@ -62,11 +62,12 @@ sudo apt install python3-rich python3-textual python3-psutil
 ### Windows 10/11
 
 Download `llamamon-0.1.0-src.zip` from the [releases](https://github.com/sentakuhm/llamamon/releases),
-unzip it, and run it with Python 3.10 or newer:
+unzip it, and run it with Python 3.10 or newer, from inside the extracted
+`llamamon-0.1.0` folder:
 
 ```
 pip install -r requirements.txt
-python -m llamamon
+python llamamon.py
 ```
 
 ### From source
