@@ -12,7 +12,7 @@ url="https://github.com/sentakuhm/llamamon"
 license=(MIT)
 depends=(python python-rich python-textual python-psutil)
 source=("$url/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=()
+sha256sums=("c1442a586e391acdaeeb856e1b640bee715a5c735a2090f44942e379d2b80471")
 
 package() {
   install -d "$pkgdir/usr/lib/llamamon/llamamon"
