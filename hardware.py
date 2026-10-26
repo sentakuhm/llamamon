@@ -2,7 +2,8 @@
 
 llama.cpp reports nothing about the machine it runs on, so the monitor samples the host itself:
 * `rocm-smi` (AMD GPUs) or `nvidia-smi` (NVIDIA GPUs) for the card's temperature, power, load,
-  VRAM and PCIe link — one subprocess per refresh, parsed defensively from its JSON/CSV;
+  VRAM and PCIe link — one subprocess per refresh on NVIDIA, two on AMD (the card info, then
+  the VRAM bytes), parsed defensively from its JSON/CSV;
 * `sensors` (lm_sensors) for the CPU's own temperature when it is installed, cached for a few
   seconds because it runs a subprocess;
 * `psutil` for the CPU, the RAM and the disk read/write rates when it is installed, and a plain
@@ -54,6 +55,7 @@ class Sampler:
         self._cards_at = 0.0
         self._cpu_temp: float | None = None
         self._cpu_temp_at = 0.0
+        self._cpu_primed = False                                      # psutil's first cpu_percent call only primes its counter
         self._ticks: tuple[float, float] | None = None                # (/proc/stat: total, idle)
         self._io_bytes: tuple[float, int, int] | None = None          # psutil path: (when, read bytes, written bytes)
         self._io_sectors: tuple[float, int, int] | None = None        # /proc path: (when, read sectors, written sectors)
@@ -202,8 +204,8 @@ class Sampler:
                     name = parts[2]
                     if not re.fullmatch(r"(?:sd|vd|hd)[a-z]|nvme\d+n\d+|mmcblk\d+|nokaport\d+t\d+", name):
                         continue                                  # partitions have their own line: whole disks only
-                    reads += int(parts[5] or 0)
-                    writes += int(parts[8] or 0)
+                    reads += int(parts[5])
+                    writes += int(parts[8])
                     seen = True
         except (OSError, IndexError, ValueError):
             return None, None
@@ -266,7 +268,12 @@ class Sampler:
         psutil = self._psutil()
         if psutil:
             try:
-                cpu_pct = float(psutil.cpu_percent(interval=None))
+                if self._cpu_primed:
+                    cpu_pct = float(psutil.cpu_percent(interval=None))
+                else:
+                    psutil.cpu_percent(interval=None)   # prime psutil's internal counter; the first real sample follows
+                    self._cpu_primed = True
+                    cpu_pct = None                      # like the /proc path: no reading yet, draw --
             except (OSError, ValueError, AttributeError):
                 cpu_pct = self._proc_cpu()
             try:

@@ -3,9 +3,9 @@
 A model-state bar, six tiles with sparklines (speed, GPU load with the card's temperature in the
 tile's top-right corner, VRAM, power, CPU with the CPU's own temperature, disk), bars for context
 fill, KV cache and system RAM, and the recent requests. Plain llama.cpp keeps no history of its
-own - and a busy slot delays the calls between requests - so every series and the request log come
-from this monitor's samples unless the server answers `GET /metrics` and reports its own; a sample
-that timed out is a blank in the sparkline, never a made-up zero.
+own - and some builds serialize reads behind a running request - so every series and the request
+log come from this monitor's samples unless the server answers `GET /metrics` and reports its own;
+a sample that timed out is a blank in the sparkline, never a made-up zero.
 
 `build(metrics)` turns the raw metrics into plain numbers (None where nothing reported one);
 `render(...)` draws them. Neither needs Textual.
@@ -26,11 +26,6 @@ from llamamon import nav
 from llamamon.themes import PALETTE
 
 GIB = 2 ** 30
-BLUE = "#5aa9ff"
-AMBER = "#f5c56b"
-RED = "#f28b82"
-ACCENT = "#34d399"
-GREY = "#59636b"
 STATES = ("Idle", "Reading", "Generating", "Queued", "Error")
 # the classic Windows console draws with its 16 palette colours; these are the names that map onto them (glyphs="solid")
 SOLID_ACCENT, SOLID_BLUE, SOLID_AMBER, SOLID_RED, SOLID_TRACK = "bright_green", "bright_blue", "yellow", "red", "bright_black"
@@ -230,7 +225,7 @@ def spark(values: list[float | None], width: int, glyphs: str, lo: float | None 
     return " " * (width - len(cells)) + "".join(cells)
 
 
-def bar(frac: float | None, width: int, glyphs: str, color: str, empty: str = GREY) -> Text:
+def bar(frac: float | None, width: int, glyphs: str, color: str, empty: str = "default") -> Text:
     t = Text(no_wrap=True)
     if glyphs == "solid":                       # solid █ and a thin ▄ track: no dithered shades in the classic console
         n = 0 if frac is None else int(round(max(0.0, min(1.0, frac)) * width))
@@ -326,13 +321,12 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     accent = accent_name if color else "default"
     if solid and color:
         accent, blue, amber, red = SOLID_ACCENT, SOLID_BLUE, SOLID_AMBER, SOLID_RED
-    plain = (lambda s: "default") if not color else (lambda s: {BLUE: blue, AMBER: amber, RED: red, GREY: grey, ACCENT: accent}.get(s, s))
     state = model["state"]
-    state_color = plain({"Idle": "default", "Reading": BLUE, "Generating": accent, "Queued": AMBER, "Error": RED}[state])
+    state_color = ({"Idle": "default", "Reading": blue, "Generating": accent, "Queued": amber, "Error": red}[state]
+                   if color else "default")
     age = None if model.get("sampled_at") is None else now - model["sampled_at"]
-    marker = ("FROZEN" if frozen else {"connected": "LIVE", "stale": "STALE", "connecting": "CONNECTING", "disconnected": "DISCONNECTED",
-                                       "auth_required": "AUTH REQUIRED", "incompatible": "INCOMPATIBLE",
-                                       "telemetry_unavailable": "LIVE"}.get(connection_state, "STALE"))
+    marker = ("FROZEN" if frozen else {"connected": "LIVE", "stale": "STALE", "connecting": "CONNECTING",
+                                       "disconnected": "DISCONNECTED"}.get(connection_state, "STALE"))
     if marker == "LIVE" and age is not None and age > 6:
         marker = "STALE"
 
@@ -387,7 +381,7 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
         _tile("GPU load", f"{fmt(g['util'])} %", f"busiest of {ncards} cards" if ncards else
               short_gpu(g["name"]) if g["count"] in (None, 1) else f"{short_gpu(g['name'])} +{int(g['count']) - 1}",
               spark(g["util_hist"], inner, glyphs, **util_scale), tile_w, accent=accent, box_style=box_style,
-              corner=f"{fmt(g['temp'])} {deg}", corner_style=plain(AMBER)),
+              corner=f"{fmt(g['temp'])} {deg}", corner_style=amber),
         _tile("VRAM", f"{fmt(g['vram_used'], 1)} / {fmt(g['vram_total'], 0)} GB",
               (f"all {ncards} cards" if ncards else
                f"{int(model['cache']['tokens']):,} KV tokens" if model["cache"]["tokens"] is not None else "graphics memory"),
@@ -401,7 +395,7 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
         _tile("Power", f"{fmt(g['power'])} W", f"of {fmt(g['power_limit'])} W limit" if g["power_limit"] else "",
               spark(g["power_hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
         _tile("CPU", f"{fmt(c['load'])} %", cpu_sub, spark(c["hist"], inner, glyphs, lo=0, hi=100), tile_w,
-              accent=accent, box_style=box_style, corner=f"{fmt(c['temp'])} {deg}", corner_style=plain(AMBER)),
+              accent=accent, box_style=box_style, corner=f"{fmt(c['temp'])} {deg}", corner_style=amber),
         _tile("Disk read", f"{fmt(d['read'], 1)} MB/s", f"write {fmt(d['write'], 1)} MB/s" if d["write"] is not None else "write --",
               spark(d["hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
     ]
@@ -433,17 +427,17 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     t = Text(no_wrap=True, overflow="crop")
     t.append("System RAM        ")
     t.append(f"{fmt(ram_used, 1)} / {fmt(ram_total, 0)} GB", style="dim")
-    lines += [t, bar(ram_frac, left_w, glyphs, plain(RED) if ram_frac is not None and ram_frac > 0.9 else accent, grey)]
+    lines += [t, bar(ram_frac, left_w, glyphs, red if ram_frac is not None and ram_frac > 0.9 else accent, grey)]
 
     req = Table(box=None, padding=(0, 1), show_header=True, header_style="dim", pad_edge=False)
-    for col, just in (("TIME", "left"), ("STATUS", "left"), ("PROMPT", "right"), ("REUSED", "right"), ("OUTPUT", "right"), ("TOK/S", "right"),
+    for col, just in (("TIME", "left"), ("STATUS", "left"), ("PROMPT", "right"), ("REUSED", "right"), ("OUTPUT", "right"), ("MEAN TOK/S", "right"),
                       ("DURATION", "right")):
         req.add_column(col, justify=just, no_wrap=True)
     strip_rows = (1 + min(ncards, 4) + (1 if ncards > 4 else 0) + 1) if ncards else 0
     show = max(2, min(6, height - 20 - strip_rows))
     for r in model["recent"][:show]:
         stamp = time.strftime("%H:%M:%S", time.localtime(r["time"])) if r["time"] else "--"
-        req.add_row(stamp, Text(r["state"], style=plain(accent) if r["state"] == "Done" else plain(RED if r["state"] == "Error" else AMBER)),
+        req.add_row(stamp, Text(r["state"], style=accent if r["state"] == "Done" else (red if r["state"] == "Error" else amber)),
                     tokens(r["prompt"]), tokens(r["reused"]), tokens(r["output"]), fmt(r["tps"], 1), fmt(r["duration"], 1, " s"))
     if not model["recent"]:
         req.add_row("No requests yet", "", "", "", "", "", "")

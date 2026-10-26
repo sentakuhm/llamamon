@@ -37,8 +37,12 @@ def _endpoint(settings: dict) -> tuple[Endpoint, hardware.Sampler]:
 
 
 def _print_status(settings: dict) -> int:
-    """One round of collection, printed as the plain views: 0 on, 3 when the server cannot be reached."""
-    endpoint, sampler = _endpoint(settings)
+    """One round of collection, printed as the plain views: 0 on, 2 on a bad url, 3 when the server cannot be reached."""
+    try:
+        endpoint, sampler = _endpoint(settings)
+    except ValueError as e:
+        print(f"llamamon status: {e}")
+        return 2
     try:
         snap = endpoint.snapshot(sampler)
     except ClientError as e:
@@ -54,11 +58,14 @@ def _print_status(settings: dict) -> int:
     print("Slots:  SLOT  STATE    PROMPT     READ   CACHED   OUTPUT  REMAIN   TOK/S")
     for line in slots[:16]:
         print(line)
+    ctx = engine.get("max_context")
+    ctx_txt = f"{ctx:.0f}" if isinstance(ctx, (int, float)) and not isinstance(ctx, bool) else "--"
     print("Engine:")
-    print(f"  model {engine.get('model') or '--'}   type {engine.get('ftype') or '--'}   ctx {engine.get('max_context')} tokens"
+    print(f"  model {engine.get('model') or '--'}   type {engine.get('ftype') or '--'}   ctx {ctx_txt} tokens"
           f"   slots {int(engine['slots']) if engine.get('slots') else '--'}")
     print(f"  file: {engine.get('path') or '--'}")
-    print("Hardware (sampled from this machine):")
+    source = "reported by the server" if snap.get("hardware_source") == "server" else "sampled from this machine"
+    print(f"Hardware ({source}):")
     for line in _hardware_lines(snap.get("hardware") or {}, snap.get("hardware_static") or {}):
         print("  " + line)
     recent = (snap.get("requests") or [])[:int(settings["requests"])]
@@ -84,7 +91,11 @@ def _run_monitor(settings: dict) -> int:
         )
         return 4
     from llamamon.monitor import MonitorApp
-    endpoint, sampler = _endpoint(settings)
+    try:
+        endpoint, sampler = _endpoint(settings)
+    except ValueError as e:
+        sys.stderr.write(f"llamamon: {e}\n")
+        return 2
     first: dict | None
     try:
         first = endpoint.snapshot(sampler)

@@ -18,8 +18,11 @@ of plain `key = value` TOML this file holds — no dependency outside the standa
 from __future__ import annotations
 
 import os
+import sys
 import tomllib
 from pathlib import Path
+
+from llamamon.client import server_url
 
 CONFIG_DIR = Path.home() / ".config" / "llamamon"
 CONFIG_FILE = CONFIG_DIR / "config.toml"
@@ -73,10 +76,14 @@ def _number(key: str, value):
 def load(path: Path | None = None) -> dict:
     """The settings as they take effect: the file over the defaults, unknown keys kept."""
     settings = dict(DEFAULTS)
+    file_path = path or CONFIG_FILE
     try:
-        with open(path or CONFIG_FILE, "rb") as handle:
+        with open(file_path, "rb") as handle:
             data = tomllib.load(handle)
-    except (OSError, tomllib.TOMLDecodeError):
+    except tomllib.TOMLDecodeError:
+        print(f"llamamon: {file_path} does not parse as TOML; using the defaults", file=sys.stderr)
+        return settings
+    except OSError:
         return settings
     if not isinstance(data, dict):
         return settings
@@ -128,6 +135,7 @@ def set_value(settings: dict, key: str, raw: str) -> tuple[dict, str]:
         value = raw.strip()
         if not value:
             raise ValueError("the url cannot be empty")
+        value = server_url(value)
     elif key in NUMBERS:
         value = _number(key, raw)
         if value is None:

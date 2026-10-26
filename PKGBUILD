@@ -4,7 +4,7 @@
 # (run this inside a checkout of the llamamon source tree; the source tarball
 # is the tagged release from GitHub)
 pkgname=llamamon
-pkgver=0.1.0
+pkgver=1.1.0
 pkgrel=1
 pkgdesc="Terminal monitor for a local llama.cpp inference server"
 arch=(any)
@@ -12,7 +12,7 @@ url="https://github.com/sentakuhm/llamamon"
 license=(MIT)
 depends=(python python-rich python-textual python-psutil)
 source=("$url/archive/refs/tags/v${pkgver}.tar.gz")
-sha256sums=("c1442a586e391acdaeeb856e1b640bee715a5c735a2090f44942e379d2b80471")
+sha256sums=()
 
 package() {
   install -d "$pkgdir/usr/lib/llamamon/llamamon"

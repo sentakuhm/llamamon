@@ -1,8 +1,8 @@
 """The Textual shell around the read-only renderers: polling, freezing, themes, the filter.
 
 It only ever reads the llama.cpp server: watching never sends it anything, and `q` quits without
-touching the server. Because llama.cpp answers one request at a time, a busy server delays the
-monitor's own calls; when /health still answers, that shows as STALE (a request is running), not
+touching the server. Some llama.cpp builds delay the monitor's own calls behind a running
+request; when /health still answers, that shows as STALE (a request is running), not
 as DISCONNECTED.
 """
 
@@ -25,6 +25,9 @@ from llamamon.overview import build as overview_build
 from llamamon.overview import render as overview_render
 from llamamon.render import VIEWS, render_view, safe
 from llamamon.themes import SHELL, ACCENT, MUTED
+
+#: The hint line the message bar shows when nothing else needs saying.
+_MESSAGE = "Read only | 1-6 views | t theme | Space freeze | r refresh | / filter | b browser | q quit"
 
 
 def choose_glyphs(requested: str, encoding: str | None) -> str:
@@ -92,7 +95,7 @@ class MonitorApp(App):
         with Vertical(id="shell"):
             yield Static("", id="content", markup=False)
             yield Input(placeholder="Filter recent requests by text, then Enter", max_length=80, id="filter")
-            yield Static("Read only  |  llamamon never sends the server anything", id="message", markup=False)
+            yield Static(_MESSAGE, id="message", markup=False)
 
     def on_mount(self) -> None:
         self._apply_theme()
@@ -107,10 +110,14 @@ class MonitorApp(App):
         bg, panel, fg, mute = SHELL[self.theme_choice]
         if self.color_choice == "never":
             bg, panel, fg, mute = "transparent", "transparent", "ansi_default", "ansi_default"
+            accent = "ansi_default"
+        else:
+            accent = ACCENT.get(self.theme_choice, "#34d399")
         self.screen.styles.background = bg
         self.query_one("#shell").styles.background = panel
         self.query_one("#content").styles.color = fg
         self.query_one("#message").styles.color = mute
+        self.query_one("#filter").styles.border = ("solid", accent)
 
     def _view_count(self) -> int:
         return nav.count()
@@ -154,12 +161,10 @@ class MonitorApp(App):
         self.query_one("#content", Static).update(display)
         if self.connection_state == "connecting":
             msg = "Connecting to llama.cpp"
-        elif self.connection_state == "telemetry_unavailable":
-            msg = "Telemetry unavailable; status only"
         elif self.frozen:
             msg = "Frozen display; collection continues"
         else:
-            msg = "Read only  |  q quits without touching the server"
+            msg = _MESSAGE
         self.query_one("#message", Static).update(self.error or msg)
 
     def _schedule_poll(self, force: bool = False) -> None:

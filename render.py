@@ -13,8 +13,7 @@ from llamamon import nav
 
 VIEWS = ("Overview", "Serving", "Requests", "Engine", "Hardware", "Logs")
 
-MARKERS = {"connected": "LIVE", "stale": "STALE", "connecting": "CONNECTING", "disconnected": "DISCONNECTED",
-           "auth_required": "AUTH REQUIRED", "incompatible": "INCOMPATIBLE", "telemetry_unavailable": "LIVE"}
+MARKERS = {"connected": "LIVE", "stale": "STALE", "connecting": "CONNECTING", "disconnected": "DISCONNECTED"}
 
 
 def safe(value, limit: int = 256) -> str:
@@ -170,18 +169,19 @@ def render_view(snapshot: dict, view: str, *, width: int, height: int, selected:
         body.append(f"Slots ({fmt(engine.get('slots'), 0)}):  SLOT  STATE    PROMPT     READ   CACHED   OUTPUT  REMAIN   TOK/S")
         slots_lines = _slot_lines(snapshot.get("slots") or [])
         if not slots_lines:
-            body.append("  -- the slots endpoint is answering between requests; a running one delays it")
+            body.append("  -- the slots endpoint is delayed by a running request on some builds")
         body += slots_lines
         if hw.get("gpus"):
             body.append("Cards:")
             body += _hardware_lines(hw, static)[:4]
 
     elif view_index == 2:                                  # Requests: the recent ones this monitor saw
-        body.append("TIME       STATUS    PROMPT   REUSED   OUTPUT   TOK/S DURATION")
+        body.append("TIME       STATUS    PROMPT   REUSED   OUTPUT   MEAN TOK/S   DURATION")
+        body.append("  (requests shorter than one poll interval are not recorded; the rate is a mean over the samples seen)")
         requests = request_lines(snapshot, filter_text, 50)
-        body += requests[: max(0, height - len(lines) - 4)]
+        body += requests[: max(0, height - len(lines) - len(body) - 3)]
         if not requests:
-            body.append("  no finished request reached this monitor yet (a running request delays the server's answers)")
+            body.append("  no finished request reached this monitor yet (a running request can delay the server's answers)")
         live_rows = _slot_lines(snapshot.get("slots") or [])
         body.append("Now running:" if any("reading" in r or "decoding" in r for r in live_rows) else "Now running: nothing")
 
@@ -198,7 +198,9 @@ def render_view(snapshot: dict, view: str, *, width: int, height: int, selected:
                  for name in ("endpoint_slots", "endpoint_props", "endpoint_metrics")]
         body.append("Endpoints: " + " ".join(parts))
 
-    elif view_index == 4:                                  # Hardware: sampled from the host, not from llama.cpp
+    elif view_index == 4:                                  # Hardware: the host sample, or the server's own report when it answers /metrics
+        source = "reported by the server" if snapshot.get("hardware_source") == "server" else "sampled from this machine"
+        body.append(f"Hardware ({source}):")
         body.append(f"Graphics card: {safe(static.get('gpu_name'), 40) or '--'}   VRAM total {fmt(static.get('gpu_vram_total_mib') and num(static.get('gpu_vram_total_mib')) / 1024, 1)} GB   {fmt(static.get('gpu_count'), 0)} card(s)")
         body += _hardware_lines(hw, static)
 

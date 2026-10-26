@@ -2,12 +2,12 @@
 
 The server answers `GET /props` (the model and its capacity), `GET /slots` (one entry per slot:
 what it is reading, decoding, or caching) and `GET /health`; `GET /v1/models` gives the file behind
-the alias. Plain llama.cpp reports no history of its own: it answers one request at a time and a
-busy slot delays the calls between requests, so the histories, rates and request log below are
-built from this monitor's own samples, and a sample that timed out is a gap in the series, never
-a zero. A server that answers `GET /metrics` (a llama.cpp fork that keeps its own live state,
-series and request log) reports what plain llama.cpp cannot see while a request runs, so when it
-answers, its numbers take priority over the samples.
+the alias. Plain llama.cpp reports no history of its own, and some builds serialize even these
+reads behind a running request, so the histories, rates and request log below are built from this
+monitor's own samples, and a sample that timed out is a gap in the series, never a zero. A server
+that answers `GET /metrics` (a llama.cpp fork that keeps its own live state, series and request
+log) reports what plain llama.cpp cannot see while a request runs, so when it answers, its
+numbers take priority over the samples.
 
 `snapshot()` returns the numbers every renderer draws: `live` (what the model is doing now),
 `engine` (the model's facts), `hardware` (the host sample), `hardware_static` (the machine's identity),
@@ -27,6 +27,8 @@ import urllib.parse
 import urllib.request
 from collections import deque
 from typing import Any
+
+from llamamon import PRODUCT_VERSION
 
 MAX_BODY = 4 * 1024 * 1024
 HISTORY_LIMIT = 90
@@ -186,7 +188,9 @@ class SlotState:
         processing = bool(row.get("is_processing"))
         finished = None
         if self.active and (task != self.request_id or not processing):
-            finished = self.complete(now, release_total=_num(row.get("n_prompt_tokens")))
+            finished = self.complete(now, release_total=_num(row.get("n_prompt_tokens")),
+                                     error=bool(row.get("error")),
+                                     error_message=_text(row.get("error_message")))
             # finalize from the last busy sample; the release row already reset the counters
             self.request_id = task
             self.since = self.decoding_since = None
@@ -226,7 +230,8 @@ class SlotState:
                 "tok_s": round(tok_s, 1) if tok_s is not None else None,
                 "since": self.since, "finished": finished}
 
-    def complete(self, now: float, release_total: float | None = None) -> dict | None:
+    def complete(self, now: float, release_total: float | None = None, *, error: bool = False,
+                 error_message: str | None = None) -> dict | None:
         """The finished request this slot just stopped running, or None if it never ran here."""
         if not self.since or not self.prompt_size:
             return None
@@ -241,7 +246,8 @@ class SlotState:
             final = release_total - self.prompt_size
             if final > (output or 0):
                 output = final
-        return {"time": now, "error": False, "finish_reason": "stop",
+        return {"time": now, "error": error, "finish_reason": "error" if error else "stop",
+                "error_message": error_message,
                 "prompt_tokens": self.prompt_size, "reused": self.cached,
                 "output_tokens": output,
                 "decode_tok_s": (round(output / decode_s, 1) if output and decode_s and decode_s > 0 else None),
@@ -266,7 +272,7 @@ class Endpoint:
         if path not in ("/props", "/slots", "/health", "/v1/models", "/metrics"):
             raise ValueError("endpoint is not part of the read-only llama.cpp contract")
         req = urllib.request.Request(self.base_url + path, headers={"Accept": "application/json",
-                                                                    "User-Agent": "llamamon/0.1"})
+                                                                    "User-Agent": f"llamamon/{PRODUCT_VERSION}"})
         opener = urllib.request.build_opener(_NoRedirect)
         try:
             with opener.open(req, timeout=timeout or self.timeout) as response:
@@ -298,7 +304,7 @@ class Endpoint:
         return data if any(key in data for key in ("live", "requests", "engine", "history")) else None
 
     def probe(self) -> bool:
-        """Is the server there at all? (a long generation delays /slots; /health answers between requests)"""
+        """Is the server there at all? (some builds delay /slots behind a running request; /health answers between requests)"""
         try:
             data = self.get("/health", timeout=min(self.timeout, 2.0))
         except ClientError:
@@ -402,9 +408,12 @@ class Endpoint:
             live = _merge_live(live, metrics.get("live"))
         hardware = sampler.sample()
         static = sampler.static()
+        hardware_source = "local"
         if metrics:
             hardware = _merge_hardware(hardware, metrics.get("hardware"))
             static = _merge_static(static, metrics.get("hardware_static"))
+            if isinstance(metrics.get("hardware"), dict):
+                hardware_source = "server"
         self.add_history(live, hardware, now)
         history = {key: list(series) for key, series in self._history.items()}
         if metrics and isinstance(metrics.get("history"), dict):
@@ -416,8 +425,8 @@ class Endpoint:
             requests = list(self._recent)
         self._last_requests = requests
         return {"live": live, "engine": engine, "hardware": hardware, "hardware_static": static,
-                "history": history, "requests": requests, "slots": rows, "time": now,
-                "activity": list(self._activity)}
+                "hardware_source": hardware_source, "history": history, "requests": requests,
+                "slots": rows, "time": now, "activity": list(self._activity)}
 
     def recent(self, limit: int = 12) -> list[dict]:
         """The finished requests: the server's own log when it keeps one, this monitor's otherwise, newest first."""
@@ -426,7 +435,3 @@ class Endpoint:
     def activity(self, limit: int = 12) -> list[dict]:
         """What this monitor watched happen: requests finishing on their own."""
         return list(self._activity)[-limit:]
-
-
-def _text(v: Any) -> str | None:
-    return None if v is None else str(v).strip() or None

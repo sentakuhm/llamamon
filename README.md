@@ -23,9 +23,9 @@ It is read-only: llamamon never sends the server anything.
 ## How it works
 
 - It polls the server every `interval` seconds (default `1.0`).
-- llama.cpp answers one request at a time, so a busy server delays the
-  monitor's own calls: the monitor shows that as `STALE` (a generation is
-  running), not as a lost connection.
+- llama.cpp answers one request at a time, and some builds delay the
+  monitor's own calls behind a running request: the monitor shows that as
+  `STALE` (a generation is running), not as a lost connection.
 - Plain llama.cpp keeps no history and reports nothing about the machine it
   runs on — every series, rate and the request log come from the monitor's
   own samples, and the GPU/CPU/RAM/disk numbers are sampled from the host
@@ -42,7 +42,7 @@ It is read-only: llamamon never sends the server anything.
 From the [releases](https://github.com/sentakuhm/llamamon/releases):
 
 ```
-sudo pacman -U llamamon-0.1.0-1-x86_64.pkg.tar.zst
+sudo pacman -U llamamon-1.1.0-1-x86_64.pkg.tar.zst
 ```
 
 ### Debian & Ubuntu
@@ -50,7 +50,7 @@ sudo pacman -U llamamon-0.1.0-1-x86_64.pkg.tar.zst
 The same `.deb` works on both:
 
 ```
-sudo apt install ./llamamon_0.1.0_all.deb
+sudo apt install ./llamamon_1.1.0_all.deb
 ```
 
 The full-screen monitor also needs `rich`, `textual` and `psutil`:
@@ -61,9 +61,9 @@ sudo apt install python3-rich python3-textual python3-psutil
 
 ### Windows 10/11
 
-Download `llamamon-0.1.0-src.zip` from the [releases](https://github.com/sentakuhm/llamamon/releases),
-unzip it, and run it with Python 3.10 or newer, from inside the extracted
-`llamamon-0.1.0` folder:
+Download `llamamon-1.1.0-src.zip` from the [releases](https://github.com/sentakuhm/llamamon/releases),
+unzip it, and run it with Python 3.11 or newer, from inside the extracted
+`llamamon-1.1.0` folder:
 
 ```
 pip install -r requirements.txt
