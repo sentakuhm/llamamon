@@ -1,0 +1,5 @@
+# Optional packages for llamamon's full-screen monitor (status and config need
+# only the standard library). Install with: python -m pip install -r llamamon/requirements.txt
+rich>=13
+textual>=0.9
+psutil>=5.9

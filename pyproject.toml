@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "llamamon"
+version = "0.1.0"
+description = "Terminal monitor for a local llama.cpp inference server"
+requires-python = ">=3.10"
+# rich, textual and psutil are optional: only the full-screen monitor needs them
+# (see requirements.txt). status and config run on the standard library alone.
+
+[project.scripts]
+llamamon = "llamamon.cli:main"
+
+[tool.setuptools]
+# flat layout: the llamamon/ folder itself is the llamamon package
+package-dir = {"llamamon" = "."}
