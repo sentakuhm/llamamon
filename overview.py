@@ -9,8 +9,10 @@ a sample that timed out is a blank in the sparkline, never a made-up zero.
 
 The layout is responsive: `render(...)` draws it to fit the window it is given. As the window
 shrinks the recent requests, the multi-GPU cards strip, the hint line and the blank lines drop
-out, the tiles go two-across below 62 columns, and `fits()` says when even the smallest layout
-(the tiles and the bars) no longer fits - that is when the plain-text view is drawn instead.
+out, the tiles go two-across below 62 columns, and in a short window the layout becomes compact -
+two-line tiles without the sub line, one-line bars, and the state names shortened - so the same
+window shows more rows and every state stays visible. `fits()` says when even that smallest layout
+no longer fits - that is when the plain-text view is drawn instead.
 
 `build(metrics)` turns the raw metrics into plain numbers (None where nothing reported one);
 `render(...)` draws them. Neither needs Textual.
@@ -32,6 +34,7 @@ from llamamon.themes import PALETTE
 
 GIB = 2 ** 30
 STATES = ("Idle", "Reading", "Generating", "Queued", "Error")
+STATES_SHORT = {"Idle": "Idle", "Reading": "Read", "Generating": "Gen", "Queued": "Queue", "Error": "Err"}
 # the classic Windows console draws with its 16 palette colours; these are the names that map onto them (glyphs="solid")
 SOLID_ACCENT, SOLID_BLUE, SOLID_AMBER, SOLID_RED, SOLID_TRACK = "bright_green", "bright_blue", "yellow", "red", "bright_black"
 
@@ -295,6 +298,27 @@ def _tile(title: str, big: str, sub: str, series: str, width: int, *, accent: st
                  border_style="dim")
 
 
+def _tile_c(title: str, big: str, series: str, width: int, *, accent: str, box_style,
+            corner: str = "", corner_style: str = "dim") -> Panel:
+    """The compact tile for short windows: the big number with an optional corner figure (a temperature), the sparkline - no sub line."""
+    body = Text(no_wrap=True, overflow="crop")
+    if corner:
+        pad = max(1, (width - 4) - len(big) - len(corner))
+        body.append(big, style="bold")
+        body.append(" " * pad + corner, style=corner_style)
+    else:
+        body.append(big, style="bold")
+    body.append("\n")
+    if isinstance(series, Text):                # the solid look's sparkline carries its own styles
+        styled = Text(style=accent)
+        styled.append_text(series)
+        body.append_text(styled)
+    else:
+        body.append(series, style=accent)
+    return Panel(body, title=Text(title, style="dim"), title_align="left", box=box_style, padding=(0, 1), width=width,
+                  border_style="dim")
+
+
 def _cards_strip(cards: list[dict], glyphs: str, accent: str, ascii_mode: bool, grey: str) -> Text:
     """One line per card (up to 4): a small load bar, load %, memory, temperature and power; "+ N more cards" beyond that."""
     t = Text(no_wrap=True, overflow="crop")
@@ -351,80 +375,13 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     head.append(" " * pad)
     head.append_text(right)
     W = min(width, 110)
-    tabs = nav.styled(0, W, accent=accent, color=color)
-    rule = Text(("-" if ascii_mode else "─") * W, style="dim")
-
-    # ---- model state bar (the state names collapse to the active one in a narrow window)
-    bar_w = max(20, W - 2)
-    st = Text(no_wrap=True, overflow="crop")
-    st.append("Model state  ", style=f"bold {accent}")
-    if W < 62:
-        st.append(f"[{state}]  ", style=state_color if state != "Idle" else "bold")
-    else:
-        for n in STATES:
-            txt = f"[{n}]" if n == state else n
-            st.append(txt + "  ", style=(state_color if n == state and state != "Idle" else "bold" if n == state else "dim"))
-    done, total = model["progress"]
-    pct = _pct(model)
-    if done is not None and total:
-        right_txt = f"{tokens(done)} / {tokens(total)} tokens · {pct}%"
-    elif model["queued"]:
-        right_txt = f"{model['queued']} queued"
-    else:
-        right_txt = ""
-    st.append(" " * max(2, W - len(st.plain) - len(right_txt)) + right_txt, style="dim")
-    state_bar = bar((done / total) if done is not None and total else None, bar_w, glyphs,
-                    state_color if state != "Idle" else accent, grey)
-
-    # ---- tiles: three across when the window is wide enough, two across when it is not;
-    # the GPU and CPU temperatures sit in the top-right corner of their load tile
+    ncols = 3 if W >= 62 else 2
+    tile_rows_n = -(-6 // ncols)
     g = model["gpu"]
     cards = g.get("cards") or []
     ncards = len(cards)
-    ncols = 3 if W >= 62 else 2
-    tile_w = max(20, (W - (ncols - 1)) // ncols)
-    inner = tile_w - 4
-    spd, spd_note, spd_hist = model["speed"]
-    util_scale = dict(lo=0, hi=100)
-    deg = "C" if ascii_mode else "°C"
-    tiles1 = [
-        _tile("Speed", f"{fmt(spd, 1)} tok/s" if spd is not None else "-- tok/s", spd_note,
-              spark(spd_hist, inner, glyphs), tile_w, accent=accent, box_style=box_style),
-        _tile("GPU load", f"{fmt(g['util'])} %", f"busiest of {ncards} cards" if ncards else
-              short_gpu(g["name"]) if g["count"] in (None, 1) else f"{short_gpu(g['name'])} +{int(g['count']) - 1}",
-              spark(g["util_hist"], inner, glyphs, **util_scale), tile_w, accent=accent, box_style=box_style,
-              corner=f"{fmt(g['temp'])} {deg}", corner_style=amber),
-        _tile("VRAM", f"{fmt(g['vram_used'], 1)} / {fmt(g['vram_total'], 0)} GB",
-              (f"all {ncards} cards" if ncards else
-               f"{int(model['cache']['tokens']):,} KV tokens" if model["cache"]["tokens"] is not None else "graphics memory"),
-              spark(g["vram_hist"], inner, glyphs, lo=0, hi=g["vram_total"]), tile_w, accent=accent, box_style=box_style),
-    ]
-    c, d = model["cpu"], model["disk"]
-    cpu_sub = (f"{int(c['sockets'])} CPUs · {int(c['cores'])} cores" if c.get("sockets") and c["sockets"] > 1 and c["cores"] else
-               f"{int(c['cores'])} cores · {int(c['threads'])} threads" if c["cores"] and c["threads"] else
-               f"{int(c['threads'])} threads" if c["threads"] else "")
-    tiles2 = [
-        _tile("Power", f"{fmt(g['power'])} W", f"of {fmt(g['power_limit'])} W limit" if g["power_limit"] else "",
-              spark(g["power_hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
-        _tile("CPU", f"{fmt(c['load'])} %", cpu_sub, spark(c["hist"], inner, glyphs, lo=0, hi=100), tile_w,
-              accent=accent, box_style=box_style, corner=f"{fmt(c['temp'])} {deg}", corner_style=amber),
-        _tile("Disk read", f"{fmt(d['read'], 1)} MB/s", f"write {fmt(d['write'], 1)} MB/s" if d["write"] is not None else "write --",
-              spark(d["hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
-    ]
-
-    tiles = tiles1 + tiles2
-
-    def row(cells: list[Panel]) -> Table:
-        t = Table.grid(padding=(0, 1))
-        for _ in cells:
-            t.add_column(width=tile_w)
-        t.add_row(*cells)
-        return t
-
-    tile_rows = [row(tiles[i:i + ncols]) for i in range(0, len(tiles), ncols)]
-
-    # ---- bars and recent requests: side by side when the request table fits beside the bars, stacked when it does not
     wide = W >= 92
+    n_max = min(len(model["recent"]), 6)
 
     def build_req(count: int) -> Table:
         req = Table(box=None, padding=(0, 1), show_header=True, header_style="dim", pad_edge=False)
@@ -443,10 +400,129 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
                 req.add_row(stamp, state_txt, tokens(r["prompt"]), tokens(r["output"]), fmt(r["tps"], 1))
         return req
 
-    n_max = min(len(model["recent"]), 6)
     probe_w = Console(force_terminal=False).measure(build_req(n_max)).maximum
     side = W - probe_w - 6 >= 20
     left_w = (W - probe_w - 6) if side else max(24, W * 2 // 5)
+    strip_rows = 1 + min(ncards, 4) + (1 if ncards > 4 else 0) if ncards else 0   # the title plus one line per card
+    strip_block = strip_rows + 1 if ncards else 0                          # the cards plus the blank line above them
+
+    def solve(tile_h, bars_h):
+        """How many request rows fit below the heading-through-tiles when the tiles are `tile_h` lines high
+        and the bars take `bars_h` lines - plus whether the cards strip and the hint line still fit."""
+        top = 5 + tile_rows_n * tile_h                                  # heading, tabs, rule, state line, state bar, tiles
+        for n in range(n_max, -1, -1):
+            req_h = bars_h if n == 0 else (max(bars_h, 2 + n) if side else bars_h + 3 + n)   # the bottom: the bars, plus title, header and n rows
+            rem = height - top - req_h
+            if rem < 0:
+                continue
+            keep_strip = ncards > 0 and rem >= strip_block
+            rem2 = rem - strip_block if keep_strip else rem
+            hint_blank = rem2 >= 2
+            show_hint = hint_blank or rem2 >= 1                        # the hint with its blank line, or bare
+            return n, keep_strip, show_hint, hint_blank
+        return 0, False, False, False
+
+    # the normal layout (five-line tiles, two-line bars) and the compact one (four-line tiles, one-line bars):
+    # the compact fits in fewer rows and never shows fewer request rows, so it wins whenever it shows more -
+    # the normal look is kept when the two tie
+    rows, keep_strip, show_hint, hint_blank = solve(5, 6)
+    c_rows, c_strip, c_hint, c_blank = solve(4, 3)
+    normal_ok = height >= 5 + tile_rows_n * 5 + 6
+    compact = (not normal_ok) or (c_rows, c_strip, c_hint) > (rows, keep_strip, show_hint)
+    if compact:
+        rows, keep_strip, show_hint, hint_blank = c_rows, c_strip, c_hint, c_blank
+    tabs = nav.styled(0, W, accent=accent, color=color)
+    rule = Text(("-" if ascii_mode else "─") * W, style="dim")
+
+    # ---- model state bar (all five states stay visible; the names shorten in the compact and narrow layouts)
+    bar_w = max(20, W - 2)
+    st = Text(no_wrap=True, overflow="crop")
+    st.append("Model state  ", style=f"bold {accent}")
+    if W >= 62 and not compact:
+        for n in STATES:
+            txt = f"[{n}]" if n == state else n
+            st.append(txt + "  ", style=(state_color if n == state and state != "Idle" else "bold" if n == state else "dim"))
+    else:
+        for n in STATES:
+            label = STATES_SHORT[n]
+            txt = f"[{label}]" if n == state else label
+            st.append(txt + " ", style=(state_color if n == state and state != "Idle" else "bold" if n == state else "dim"))
+    done, total = model["progress"]
+    pct = _pct(model)
+    if done is not None and total:
+        right_txt = f"{tokens(done)} / {tokens(total)} tokens · {pct}%"
+    elif model["queued"]:
+        right_txt = f"{model['queued']} queued"
+    else:
+        right_txt = ""
+    st.append(" " * max(2, W - len(st.plain) - len(right_txt)) + right_txt, style="dim")
+    state_bar = bar((done / total) if done is not None and total else None, bar_w, glyphs,
+                    state_color if state != "Idle" else accent, grey)
+
+    # ---- tiles: three across when the window is wide enough, two across when it is not;
+    # the GPU and CPU temperatures sit in the top-right corner of their load tile
+    tile_w = max(20, (W - (ncols - 1)) // ncols)
+    inner = tile_w - 4
+    spd, spd_note, spd_hist = model["speed"]
+    util_scale = dict(lo=0, hi=100)
+    deg = "C" if ascii_mode else "°C"
+    c, d = model["cpu"], model["disk"]
+    if compact:
+        tiles1 = [
+            _tile_c("Speed", f"{fmt(spd, 1)} tok/s" if spd is not None else "-- tok/s",
+                    spark(spd_hist, inner, glyphs), tile_w, accent=accent, box_style=box_style),
+            _tile_c("GPU load", f"{fmt(g['util'])} %",
+                    spark(g["util_hist"], inner, glyphs, **util_scale), tile_w, accent=accent, box_style=box_style,
+                    corner=f"{fmt(g['temp'])} {deg}", corner_style=amber),
+            _tile_c("VRAM", f"{fmt(g['vram_used'], 1)} / {fmt(g['vram_total'], 0)} GB",
+                    spark(g["vram_hist"], inner, glyphs, lo=0, hi=g["vram_total"]), tile_w, accent=accent, box_style=box_style),
+        ]
+        tiles2 = [
+            _tile_c("Power", f"{fmt(g['power'])} W",
+                    spark(g["power_hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
+            _tile_c("CPU", f"{fmt(c['load'])} %",
+                    spark(c["hist"], inner, glyphs, lo=0, hi=100), tile_w, accent=accent, box_style=box_style,
+                    corner=f"{fmt(c['temp'])} {deg}", corner_style=amber),
+            _tile_c("Disk read", f"{fmt(d['read'], 1)} MB/s",
+                    spark(d["hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
+        ]
+    else:
+        cpu_sub = (f"{int(c['sockets'])} CPUs · {int(c['cores'])} cores" if c.get("sockets") and c["sockets"] > 1 and c["cores"] else
+                   f"{int(c['cores'])} cores · {int(c['threads'])} threads" if c["cores"] and c["threads"] else
+                   f"{int(c['threads'])} threads" if c["threads"] else "")
+        tiles1 = [
+            _tile("Speed", f"{fmt(spd, 1)} tok/s" if spd is not None else "-- tok/s", spd_note,
+                  spark(spd_hist, inner, glyphs), tile_w, accent=accent, box_style=box_style),
+            _tile("GPU load", f"{fmt(g['util'])} %", f"busiest of {ncards} cards" if ncards else
+                  short_gpu(g["name"]) if g["count"] in (None, 1) else f"{short_gpu(g['name'])} +{int(g['count']) - 1}",
+                  spark(g["util_hist"], inner, glyphs, **util_scale), tile_w, accent=accent, box_style=box_style,
+                  corner=f"{fmt(g['temp'])} {deg}", corner_style=amber),
+            _tile("VRAM", f"{fmt(g['vram_used'], 1)} / {fmt(g['vram_total'], 0)} GB",
+                  (f"all {ncards} cards" if ncards else
+                   f"{int(model['cache']['tokens']):,} KV tokens" if model["cache"]["tokens"] is not None else "graphics memory"),
+                  spark(g["vram_hist"], inner, glyphs, lo=0, hi=g["vram_total"]), tile_w, accent=accent, box_style=box_style),
+        ]
+        tiles2 = [
+            _tile("Power", f"{fmt(g['power'])} W", f"of {fmt(g['power_limit'])} W limit" if g["power_limit"] else "",
+                  spark(g["power_hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
+            _tile("CPU", f"{fmt(c['load'])} %", cpu_sub, spark(c["hist"], inner, glyphs, lo=0, hi=100), tile_w,
+                  accent=accent, box_style=box_style, corner=f"{fmt(c['temp'])} {deg}", corner_style=amber),
+            _tile("Disk read", f"{fmt(d['read'], 1)} MB/s", f"write {fmt(d['write'], 1)} MB/s" if d["write"] is not None else "write --",
+                  spark(d["hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
+        ]
+
+    tiles = tiles1 + tiles2
+
+    def row(cells: list[Panel]) -> Table:
+        t = Table.grid(padding=(0, 1))
+        for _ in cells:
+            t.add_column(width=tile_w)
+        t.add_row(*cells)
+        return t
+
+    tile_rows = [row(tiles[i:i + ncols]) for i in range(0, len(tiles), ncols)]
+
+    # ---- bars and recent requests: side by side when the request table fits beside the bars, stacked when it does not
     used_ctx, ctx_max = model["context"]
     used_ctx_frac = (used_ctx / ctx_max) if used_ctx is not None and ctx_max else None
     e = model["cache"]
@@ -454,37 +530,40 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     ram_used, ram_total = model["ram"]
     ram_frac = (ram_used / ram_total) if ram_used is not None and ram_total else None
     lines: list[Text] = []
-    t = Text(no_wrap=True, overflow="crop")
-    t.append("Context fill  ", style=f"bold {accent}")
-    t.append(f"{k(used_ctx)} / {k(ctx_max)}" + (f"  {used_ctx_frac * 100:.0f}%" if used_ctx_frac is not None else ""))
-    lines += [t, bar(used_ctx_frac, left_w, glyphs, accent, grey)]
-    t = Text(no_wrap=True, overflow="crop")
-    t.append("KV cache        ")
-    t.append(f"{tokens(e['tokens'])} reused" + (f" of {tokens(e['prompt'])}" if e["prompt"] is not None else ""), style="dim")
-    lines += [t, bar(e_frac, left_w, glyphs, accent, grey)]
-    t = Text(no_wrap=True, overflow="crop")
-    t.append("System RAM        ")
-    t.append(f"{fmt(ram_used, 1)} / {fmt(ram_total, 0)} GB", style="dim")
-    lines += [t, bar(ram_frac, left_w, glyphs, red if ram_frac is not None and ram_frac > 0.9 else accent, grey)]
+    if compact:
+        # one line per bar: the label and value, then the bar filling the rest of the line
+        def _inline(label: str, value: str, value_style: str, frac: float | None, color: str) -> Text:
+            t = Text(no_wrap=True, overflow="crop")
+            t.append(label, style=f"bold {accent}")
+            t.append(f"  {value}  ", style=value_style)
+            bw = left_w if side else W                          # beside the table the bar stops short of it; stacked it fills the line
+            t.append_text(bar(frac, max(4, bw - len(t.plain) - 2), glyphs, color, grey))
+            return t
 
-    # ---- what fits: the heading through the tiles and the six bar lines always draw; then, in order,
+        lines = [
+            _inline("Context fill", f"{k(used_ctx)} / {k(ctx_max)}" + (f"  {used_ctx_frac * 100:.0f}%" if used_ctx_frac is not None else ""),
+                    "default", used_ctx_frac, accent),
+            _inline("KV cache", f"{tokens(e['tokens'])} reused" + (f" of {tokens(e['prompt'])}" if e["prompt"] is not None else ""),
+                    "dim", e_frac, accent),
+            _inline("System RAM", f"{fmt(ram_used, 1)} / {fmt(ram_total, 0)} GB", "dim", ram_frac,
+                    red if ram_frac is not None and ram_frac > 0.9 else accent),
+        ]
+    else:
+        t = Text(no_wrap=True, overflow="crop")
+        t.append("Context fill  ", style=f"bold {accent}")
+        t.append(f"{k(used_ctx)} / {k(ctx_max)}" + (f"  {used_ctx_frac * 100:.0f}%" if used_ctx_frac is not None else ""))
+        lines += [t, bar(used_ctx_frac, left_w, glyphs, accent, grey)]
+        t = Text(no_wrap=True, overflow="crop")
+        t.append("KV cache        ")
+        t.append(f"{tokens(e['tokens'])} reused" + (f" of {tokens(e['prompt'])}" if e["prompt"] is not None else ""), style="dim")
+        lines += [t, bar(e_frac, left_w, glyphs, accent, grey)]
+        t = Text(no_wrap=True, overflow="crop")
+        t.append("System RAM        ")
+        t.append(f"{fmt(ram_used, 1)} / {fmt(ram_total, 0)} GB", style="dim")
+        lines += [t, bar(ram_frac, left_w, glyphs, red if ram_frac is not None and ram_frac > 0.9 else accent, grey)]
+
+    # ---- what fits: the heading through the tiles and the bars always draw; then, in order,
     # the recent requests (as many rows as fit), the cards strip, the hint line and the blank lines
-    strip_rows = 1 + min(ncards, 4) + (1 if ncards > 4 else 0) if ncards else 0   # the title plus one line per card
-    strip_block = strip_rows + 1 if ncards else 0                          # the cards plus the blank line above them
-    top = 5 + len(tile_rows) * 5                                          # heading, tabs, rule, state line, state bar, tiles
-    rows, keep_strip, show_hint, hint_blank = 0, False, False, False
-    for n in range(n_max, -1, -1):
-        req_h = 6 if n == 0 else (max(6, 2 + n) if side else 9 + n)        # the bottom: the bars, plus title, header and n rows
-        rem = height - top - req_h
-        if rem < 0:
-            continue
-        keep_strip = ncards > 0 and rem >= strip_block
-        rem2 = rem - strip_block if keep_strip else rem
-        hint_blank = rem2 >= 2
-        show_hint = hint_blank or rem2 >= 1                                # the hint with its blank line, or bare
-        rows = n
-        break
-
     req = build_req(rows)
     if rows:
         if side:
@@ -511,11 +590,12 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
 
 
 def fits(width: int, height: int) -> bool:
-    """Whether even the smallest Overview layout - the tiles, the model-state bar and the three bars,
-    with no cards strip, no requests and no hint - fits in this window."""
+    """Whether even the smallest Overview layout - the compact one with the two-line tiles and the
+    one-line bars, with no cards strip, no requests and no hint - fits in this window."""
     W = min(width, 110)
     ncols = 3 if W >= 62 else 2
-    return width >= (62 if ncols == 3 else 42) and height >= 5 + (10 if ncols == 3 else 15) + 6
+    tile_rows = -(-6 // ncols)
+    return width >= (62 if ncols == 3 else 41) and height >= 5 + tile_rows * 4 + 3
 
 
 def _pct(model: dict) -> int | None:

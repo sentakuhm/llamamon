@@ -285,9 +285,13 @@ llamamon never invents a value: unknown readings are drawn as `--`.
   fragment or credentials, and remote hosts require `https`.
 - **The layout looks cramped** — the Overview scales with the window: below 62 columns the six
   tiles go two-across, and as the window shrinks the recent requests, the multi-GPU cards
-  strip, the hint line and the blank lines drop out first, the bars stay. Only when the tiles
-  and the bars no longer fit (roughly 62 columns × 23 rows, or 42 columns × 28 rows) is the
-  plain-text view drawn instead.
+  strip, the hint line and the blank lines drop out first, the bars stay. In a short window
+  the layout becomes compact — two-line tiles without the sub line, one-line bars, and the
+  state names shortened — so the same window shows more rows and all five model states stay
+  visible. (The terminal's font size is set by the terminal emulator, not by llamamon; the
+  compact layout is what llamamon can do.) Only when even that smallest layout no longer fits
+  (roughly 64 columns × 18 rows for the three-across tiles, or 43 columns × 22 rows for the
+  two-across tiles) is the plain-text view drawn instead.
 - **A warning about `config.toml`** — a file that does not parse as TOML falls back to the
   defaults with a stderr warning. Check the effective settings with `llamamon config show`.
 
