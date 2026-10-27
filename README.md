@@ -283,8 +283,11 @@ llamamon never invents a value: unknown readings are drawn as `--`.
   checkout); `status` and `config` keep working without them.
 - **`config set url` rejects the URL** — it must be an http(s) server root with no path, query,
   fragment or credentials, and remote hosts require `https`.
-- **The layout looks cramped** — the rich Overview needs roughly 78×23 cells; below that, the
-  plain-text view is drawn instead. Widen the terminal.
+- **The layout looks cramped** — the Overview scales with the window: below 62 columns the six
+  tiles go two-across, and as the window shrinks the recent requests, the multi-GPU cards
+  strip, the hint line and the blank lines drop out first, the bars stay. Only when the tiles
+  and the bars no longer fit (roughly 62 columns × 23 rows, or 42 columns × 28 rows) is the
+  plain-text view drawn instead.
 - **A warning about `config.toml`** — a file that does not parse as TOML falls back to the
   defaults with a stderr warning. Check the effective settings with `llamamon config show`.
 

@@ -7,6 +7,11 @@ own - and some builds serialize reads behind a running request - so every series
 log come from this monitor's samples unless the server answers `GET /metrics` and reports its own;
 a sample that timed out is a blank in the sparkline, never a made-up zero.
 
+The layout is responsive: `render(...)` draws it to fit the window it is given. As the window
+shrinks the recent requests, the multi-GPU cards strip, the hint line and the blank lines drop
+out, the tiles go two-across below 62 columns, and `fits()` says when even the smallest layout
+(the tiles and the bars) no longer fits - that is when the plain-text view is drawn instead.
+
 `build(metrics)` turns the raw metrics into plain numbers (None where nothing reported one);
 `render(...)` draws them. Neither needs Textual.
 """
@@ -17,7 +22,7 @@ import time
 from typing import Any
 
 from rich import box
-from rich.console import Group
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
@@ -293,20 +298,21 @@ def _tile(title: str, big: str, sub: str, series: str, width: int, *, accent: st
 def _cards_strip(cards: list[dict], glyphs: str, accent: str, ascii_mode: bool, grey: str) -> Text:
     """One line per card (up to 4): a small load bar, load %, memory, temperature and power; "+ N more cards" beyond that."""
     t = Text(no_wrap=True, overflow="crop")
-    t.append("Cards" + chr(10), style=f"bold {accent}")
+    t.append("Cards", style=f"bold {accent}")
     shown = cards[:4]
     names = [short_gpu(c.get("name")) for c in shown]
     pad = min(16, max(len(n) for n in names))
     for c, name in zip(shown, names):
+        t.append(chr(10))
         util = c["util"]
         used, total = c["mem_used"], c["mem_total"]
         t.append(f"GPU {c['index'] if c['index'] is not None else '?'}  {name[:pad]:<{pad}}  ")
         t.append_text(bar((util / 100.0) if util is not None else None, 10, glyphs, accent, grey))
         mem = f"{fmt(used, 1)} / {fmt(total, 0)} GB" if used is not None and total is not None else "-- GB"
         temp = f"{fmt(c['temp'])} {'C' if ascii_mode else '°C'}"
-        t.append(f"  {fmt(util):>3} %   {mem:<14}  {temp:>6}   {fmt(c['power']):>4} W" + chr(10))
+        t.append(f"  {fmt(util):>3} %   {mem:<14}  {temp:>6}   {fmt(c['power']):>4} W")
     if len(cards) > 4:
-        t.append(f"+ {len(cards) - 4} more cards: press 5" + chr(10), style="dim")
+        t.append(chr(10) + f"+ {len(cards) - 4} more cards: press 5", style="dim")
     return t
 
 
@@ -344,16 +350,20 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     pad = max(2, width - len(head.plain) - len(right.plain))
     head.append(" " * pad)
     head.append_text(right)
-    tabs = nav.styled(0, min(width, 110), accent=accent, color=color)
-    rule = Text(("-" if ascii_mode else "─") * min(width, 110), style="dim")
+    W = min(width, 110)
+    tabs = nav.styled(0, W, accent=accent, color=color)
+    rule = Text(("-" if ascii_mode else "─") * W, style="dim")
 
-    # ---- model state bar
-    bar_w = max(20, min(width, 110) - 2)
+    # ---- model state bar (the state names collapse to the active one in a narrow window)
+    bar_w = max(20, W - 2)
     st = Text(no_wrap=True, overflow="crop")
     st.append("Model state  ", style=f"bold {accent}")
-    for n in STATES:
-        txt = f"[{n}]" if n == state else n
-        st.append(txt + "  ", style=(state_color if n == state and state != "Idle" else "bold" if n == state else "dim"))
+    if W < 62:
+        st.append(f"[{state}]  ", style=state_color if state != "Idle" else "bold")
+    else:
+        for n in STATES:
+            txt = f"[{n}]" if n == state else n
+            st.append(txt + "  ", style=(state_color if n == state and state != "Idle" else "bold" if n == state else "dim"))
     done, total = model["progress"]
     pct = _pct(model)
     if done is not None and total:
@@ -362,15 +372,17 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
         right_txt = f"{model['queued']} queued"
     else:
         right_txt = ""
-    st.append(" " * max(2, min(width, 110) - len(st.plain) - len(right_txt)) + right_txt, style="dim")
+    st.append(" " * max(2, W - len(st.plain) - len(right_txt)) + right_txt, style="dim")
     state_bar = bar((done / total) if done is not None and total else None, bar_w, glyphs,
                     state_color if state != "Idle" else accent, grey)
 
-    # ---- tiles: six, two rows of three; the GPU and CPU temperatures sit in the top-right corner of their load tile
+    # ---- tiles: three across when the window is wide enough, two across when it is not;
+    # the GPU and CPU temperatures sit in the top-right corner of their load tile
     g = model["gpu"]
     cards = g.get("cards") or []
     ncards = len(cards)
-    tile_w = max(20, (min(width, 110) - 3) // 3)
+    ncols = 3 if W >= 62 else 2
+    tile_w = max(20, (W - (ncols - 1)) // ncols)
     inner = tile_w - 4
     spd, spd_note, spd_hist = model["speed"]
     util_scale = dict(lo=0, hi=100)
@@ -400,15 +412,41 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
               spark(d["hist"], inner, glyphs, lo=0), tile_w, accent=accent, box_style=box_style),
     ]
 
-    def row(tiles: list[Panel]) -> Table:
+    tiles = tiles1 + tiles2
+
+    def row(cells: list[Panel]) -> Table:
         t = Table.grid(padding=(0, 1))
-        for _ in tiles:
+        for _ in cells:
             t.add_column(width=tile_w)
-        t.add_row(*tiles)
+        t.add_row(*cells)
         return t
 
-    # ---- bars and requests
-    left_w = max(24, min(width, 110) * 2 // 5)
+    tile_rows = [row(tiles[i:i + ncols]) for i in range(0, len(tiles), ncols)]
+
+    # ---- bars and recent requests: side by side when the request table fits beside the bars, stacked when it does not
+    wide = W >= 92
+
+    def build_req(count: int) -> Table:
+        req = Table(box=None, padding=(0, 1), show_header=True, header_style="dim", pad_edge=False)
+        columns = (("TIME", "left"), ("STATUS", "left"), ("PROMPT", "right"), ("REUSED", "right"), ("OUTPUT", "right"),
+                   ("MEAN TOK/S", "right"), ("DURATION", "right")) if wide else (("TIME", "left"), ("STATUS", "left"),
+                   ("PROMPT", "right"), ("OUTPUT", "right"), ("TOK/S", "right"))
+        for col, just in columns:
+            req.add_column(col, justify=just, no_wrap=True)
+        for r in model["recent"][:count]:
+            stamp = time.strftime("%H:%M:%S", time.localtime(r["time"])) if r["time"] else "--"
+            state_txt = Text(r["state"], style=accent if r["state"] == "Done" else (red if r["state"] == "Error" else amber))
+            if wide:
+                req.add_row(stamp, state_txt, tokens(r["prompt"]), tokens(r["reused"]), tokens(r["output"]),
+                            fmt(r["tps"], 1), fmt(r["duration"], 1, " s"))
+            else:
+                req.add_row(stamp, state_txt, tokens(r["prompt"]), tokens(r["output"]), fmt(r["tps"], 1))
+        return req
+
+    n_max = min(len(model["recent"]), 6)
+    probe_w = Console(force_terminal=False).measure(build_req(n_max)).maximum
+    side = W - probe_w - 6 >= 20
+    left_w = (W - probe_w - 6) if side else max(24, W * 2 // 5)
     used_ctx, ctx_max = model["context"]
     used_ctx_frac = (used_ctx / ctx_max) if used_ctx is not None and ctx_max else None
     e = model["cache"]
@@ -429,30 +467,55 @@ def render(model: dict, *, width: int, height: int, connection: str, connection_
     t.append(f"{fmt(ram_used, 1)} / {fmt(ram_total, 0)} GB", style="dim")
     lines += [t, bar(ram_frac, left_w, glyphs, red if ram_frac is not None and ram_frac > 0.9 else accent, grey)]
 
-    req = Table(box=None, padding=(0, 1), show_header=True, header_style="dim", pad_edge=False)
-    for col, just in (("TIME", "left"), ("STATUS", "left"), ("PROMPT", "right"), ("REUSED", "right"), ("OUTPUT", "right"), ("MEAN TOK/S", "right"),
-                      ("DURATION", "right")):
-        req.add_column(col, justify=just, no_wrap=True)
-    strip_rows = (1 + min(ncards, 4) + (1 if ncards > 4 else 0) + 1) if ncards else 0
-    show = max(2, min(6, height - 20 - strip_rows))
-    for r in model["recent"][:show]:
-        stamp = time.strftime("%H:%M:%S", time.localtime(r["time"])) if r["time"] else "--"
-        req.add_row(stamp, Text(r["state"], style=accent if r["state"] == "Done" else (red if r["state"] == "Error" else amber)),
-                    tokens(r["prompt"]), tokens(r["reused"]), tokens(r["output"]), fmt(r["tps"], 1), fmt(r["duration"], 1, " s"))
-    if not model["recent"]:
-        req.add_row("No requests yet", "", "", "", "", "", "")
-    bottom = Table.grid(padding=(0, 3))
-    bottom.add_column(width=left_w)
-    bottom.add_column()
-    right_side = Group(Text("Recent requests", style=f"bold {accent}"), req)
-    bottom.add_row(Group(*lines), right_side)
+    # ---- what fits: the heading through the tiles and the six bar lines always draw; then, in order,
+    # the recent requests (as many rows as fit), the cards strip, the hint line and the blank lines
+    strip_rows = 1 + min(ncards, 4) + (1 if ncards > 4 else 0) if ncards else 0   # the title plus one line per card
+    strip_block = strip_rows + 1 if ncards else 0                          # the cards plus the blank line above them
+    top = 5 + len(tile_rows) * 5                                          # heading, tabs, rule, state line, state bar, tiles
+    rows, keep_strip, show_hint, hint_blank = 0, False, False, False
+    for n in range(n_max, -1, -1):
+        req_h = 6 if n == 0 else (max(6, 2 + n) if side else 9 + n)        # the bottom: the bars, plus title, header and n rows
+        rem = height - top - req_h
+        if rem < 0:
+            continue
+        keep_strip = ncards > 0 and rem >= strip_block
+        rem2 = rem - strip_block if keep_strip else rem
+        hint_blank = rem2 >= 2
+        show_hint = hint_blank or rem2 >= 1                                # the hint with its blank line, or bare
+        rows = n
+        break
 
-    hint = Text(f"{nav.keys()} / Left-Right views" + "   / filter   Space freeze   r refresh   t theme   b browser   ? help   q quit", style="dim")
-    parts: list[Any] = [head, tabs, rule, st, state_bar, Text(""), row(tiles1), row(tiles2)]
-    if ncards:
+    req = build_req(rows)
+    if rows:
+        if side:
+            bottom = Table.grid(padding=(0, 3))
+            bottom.add_column(width=left_w)
+            bottom.add_column()
+            bottom.add_row(Group(*lines), Group(Text("Recent requests", style=f"bold {accent}"), req))
+        else:
+            bottom = Group(*lines, Text(""), Text("Recent requests", style=f"bold {accent}"), req)
+    else:
+        bottom = Group(*lines)
+
+    hint = Text(f"{nav.keys()} / Left-Right views" + "   / filter   Space freeze   r refresh   t theme   b browser   ? help   q quit",
+                style="dim", no_wrap=True, overflow="crop")
+    parts: list[Any] = [head, tabs, rule, st, state_bar, *tile_rows]
+    if keep_strip:
         parts += [Text(""), _cards_strip(cards, glyphs, accent, ascii_mode, grey)]
-    parts += [bottom, Text(""), hint]
+    parts.append(bottom)
+    if show_hint:
+        if hint_blank:
+            parts.append(Text(""))
+        parts.append(hint)
     return Group(*parts)
+
+
+def fits(width: int, height: int) -> bool:
+    """Whether even the smallest Overview layout - the tiles, the model-state bar and the three bars,
+    with no cards strip, no requests and no hint - fits in this window."""
+    W = min(width, 110)
+    ncols = 3 if W >= 62 else 2
+    return width >= (62 if ncols == 3 else 42) and height >= 5 + (10 if ncols == 3 else 15) + 6
 
 
 def _pct(model: dict) -> int | None:

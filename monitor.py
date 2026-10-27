@@ -4,6 +4,11 @@ It only ever reads the llama.cpp server: watching never sends it anything, and `
 touching the server. Some llama.cpp builds delay the monitor's own calls behind a running
 request; when /health still answers, that shows as STALE (a request is running), not
 as DISCONNECTED.
+
+The Overview re-lays itself out on every resize: as the window shrinks the recent requests,
+the multi-GPU cards strip, the hint line and the blank lines drop out and the tiles go
+two-across, and only when even the smallest layout no longer fits does the plain-text
+view take over.
 """
 
 from __future__ import annotations
@@ -22,6 +27,7 @@ from textual.widgets import Input, Static
 
 from llamamon import nav
 from llamamon.overview import build as overview_build
+from llamamon.overview import fits as overview_fits
 from llamamon.overview import render as overview_render
 from llamamon.render import VIEWS, render_view, safe
 from llamamon.themes import SHELL, ACCENT, MUTED
@@ -130,15 +136,17 @@ class MonitorApp(App):
     def _paint(self, size=None) -> None:
         size = self.screen.size if size is None else size
         snapshot = self._shown()
-        if self.view == 0 and size.width >= 78 and size.height >= 23 and self.metrics_model is not None:
+        w = max(30, size.width - 2)
+        h = max(8, size.height - 2)
+        if self.view == 0 and self.metrics_model is not None and overview_fits(w, h):
             display = overview_render(
-                self.metrics_model, width=max(30, min(size.width - 2, 100)), height=max(8, size.height - 2),
+                self.metrics_model, width=min(w, 100), height=h,
                 connection=self.endpoint.base_url, connection_state=self.connection_state, frozen=self.frozen,
                 glyphs=self.glyph_choice, color=self.color_choice != "never", theme=self.theme_choice,
                 view_label=nav.title(0), bullet="●")
         else:
             content = render_view(snapshot, VIEWS[self.view] if self.view < len(VIEWS) else "Overview",
-                                  width=max(30, size.width - 2), height=max(8, size.height - 2),
+                                  width=w, height=h,
                                   frozen=self.frozen, filter_text=self.filter_text,
                                   glyphs="ascii" if self.glyph_choice == "solid" else self.glyph_choice,
                                   connection=self.endpoint.base_url, connection_state=self.connection_state)
