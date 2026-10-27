@@ -1,5 +1,28 @@
 # Changelog
 
+## 1.1.1 — 2026-10-27
+
+### What's new
+
+- **The Overview scales with the terminal** — the dashboard renders to fit
+  the window it is given: below 62 columns the six tiles go two-across, and
+  as the window shrinks the recent requests, the multi-GPU cards strip, the
+  hint line and the blank lines drop out one by one first, the bars stay.
+- **Compact layout in short windows** — when the window is vertically short
+  the Overview switches to a compact layout instead of the plain-text
+  fallback: two-line tiles (big number and sparkline, no sub line), one-line
+  bars with the bar inline, and shortened state names (`Read` / `Gen` /
+  `Queue` / `Err`) so all five model states stay visible in the same rows.
+  The plain-text view is drawn only when even that smallest layout no longer
+  fits — roughly 64 columns × 18 rows for the three-across tiles, or
+  43 columns × 22 rows for the two-across tiles (terminal size, counting
+  the shell's borders and message line).
+
+### Docs
+
+- README: the layout troubleshooting note now describes the compact mode and
+  the new smallest-fit sizes.
+
 ## 1.1.0 — 2026-10-26
 
 ### What's new

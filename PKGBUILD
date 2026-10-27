@@ -4,7 +4,7 @@
 # (run this inside a checkout of the llamamon source tree; the source tarball
 # is the tagged release from GitHub)
 pkgname=llamamon
-pkgver=1.1.0
+pkgver=1.1.1
 pkgrel=1
 pkgdesc="Terminal monitor for a local llama.cpp inference server"
 arch=(any)

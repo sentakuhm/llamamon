@@ -94,18 +94,18 @@ python -m llamamon status
 python llamamon/llamamon.py status
 ```
 
-**Prebuilt binaries** from the [v1.1.0 release](https://github.com/sentakuhm/llamamon/releases/tag/v1.1.0):
+**Prebuilt binaries** from the [v1.1.1 release](https://github.com/sentakuhm/llamamon/releases/tag/v1.1.1):
 
-- Debian/Ubuntu: `llamamon_1.1.0_all.deb` (depends on `python3`; suggests `python3-rich`,
+- Debian/Ubuntu: `llamamon_1.1.1_all.deb` (depends on `python3`; suggests `python3-rich`,
   `python3-textual`, `python3-psutil`)
-- Arch Linux: `llamamon-1.1.0-1-x86_64.pkg.tar.zst` (depends on `python-rich`, `python-textual`,
+- Arch Linux: `llamamon-1.1.1-1-x86_64.pkg.tar.zst` (depends on `python-rich`, `python-textual`,
   `python-psutil`)
-- Source zip: `llamamon-1.1.0-src.zip`
+- Source zip: `llamamon-1.1.1-src.zip`
 
 Verify any installation with:
 
 ```bash
-llamamon --version    # llamamon 1.1.0
+llamamon --version    # llamamon 1.1.1
 ```
 
 ## Quick start
@@ -146,7 +146,7 @@ llamamon status
 | `llamamon config path` | Print the config file's path |
 | `llamamon config init` | Write the defaults to the config file |
 | `llamamon config help` | Where the file lives and how to change it |
-| `llamamon --version` | Print `llamamon 1.1.0` |
+| `llamamon --version` | Print `llamamon 1.1.1` |
 
 Flags (they apply to `monitor` and `status`, and override the config file):
 

@@ -11,7 +11,7 @@ from pathlib import Path
 SCHEMA_VERSION = 1
 
 #: The version people are told: llamamon's own release number.
-PRODUCT_VERSION = "1.1.0"
+PRODUCT_VERSION = "1.1.1"
 
 
 def version() -> str:
